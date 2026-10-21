@@ -44,7 +44,7 @@ else:
                     st.badge(m["focus"], color="violet")
                 st.badge("作文里的句子" if m["source"] == "essay" else "刷题", color="red" if m["source"] == "essay" else "gray")
                 st.badge("已移出" if m.get("retired") else when, color="green" if m.get("retired") else "orange")
-                st.badge(f"已独立做对 {len(m.get('reviews_ok', []))}/{drills.MISTAKE_RETIRE_REVIEWS} 天", color="blue")
+                st.badge(f"已独立做对 {len(m.get('reviews_ok', []))}/{drills.retire_after(m['kc'])} 天", color="blue")
             if m.get("text"):
                 st.markdown(f"> {ui.md_escape(m['text'])}")
             if m.get("note"):

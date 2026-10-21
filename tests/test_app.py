@@ -215,3 +215,43 @@ def test_background_prefetch_adds_items_before_bank_runs_out(at):
     btn(at, "提交").click().run()
     check(at, "prefetch merged")
     assert any(x["kc"] == "articles" for x in at.session_state["progress"]["ai_items"])
+
+
+def _open_fix_item(at, monkeypatch, sentence="It rains , we stay home."):
+    setup_profile_and_plan(at)
+    p = at.session_state["progress"]
+    from essay_coach.items import seed_items
+
+    p["flagged_items"] = [i.id for i in seed_items() if i.kc == "sent_boundary" and i.format != "fix"]
+    at.session_state["drill_request"] = {"mode": "kc", "kc": "sent_boundary"}
+    at.switch_page("app_pages/drill.py")
+    at.run()
+    cur = at.session_state["drill"]["current"]
+    it = Item.model_validate(cur["item"])
+    at.text_area(key=f"ans_{it.id}_{cur['n']}").input(sentence).run()
+    btn(at, "提交").click().run()
+    return it
+
+
+def test_contest_overturns_wrong_grade_and_remembers_answer(at, monkeypatch):
+    it = _open_fix_item(at, monkeypatch)
+    assert at.session_state["drill"]["current"]["wrong"] == 1
+    # 复核时三位老师都认为答案正确
+    monkeypatch.setitem(fake_claude.SAMPLES, "DrillGrade", lambda req: {
+        "score": 1.0 if "格外仔细地复核" in req["system"] else 0.0, "uncertain": False, "verdict": "v", "good": "改对了",
+        "issue": "", "hint": "", "rule": "r"})
+    btn(at, "我认为我的答案也对").click().run()
+    check(at, "contest")
+    cur = at.session_state["drill"]["current"]
+    assert cur["finished"] and cur["wrong"] == 0 and cur["result"]["contest"] == "overturned"
+    assert at.session_state["progress"]["extra_accepted"][it.id] == ["It rains , we stay home."]
+    assert at.session_state["progress"]["attempts"][-1]["wrong"] == 0
+
+
+def test_contest_upheld_keeps_grade(at, monkeypatch):
+    _open_fix_item(at, monkeypatch)
+    btn(at, "我认为我的答案也对").click().run()
+    check(at, "contest upheld")
+    cur = at.session_state["drill"]["current"]
+    assert not cur["finished"] and cur["result"]["contest"] == "upheld"
+    assert not [b for b in at.button if "我认为我的答案也对" in (b.label or "")]

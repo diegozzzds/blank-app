@@ -6,6 +6,7 @@ AI 不替学生完成当前任务——不写出学生正在做的句子、段�
 """
 
 import json
+import random
 import re
 
 import streamlit as st
@@ -83,43 +84,90 @@ IELTS_ANCHORS = """分档参照（据雅思公开评分描述概括）：
 
 # ---------------- 刷题判分 ----------------
 
-def _item_block(item) -> str:
+def _item_block(item, shuffle_seed: int = 0) -> str:
     parts = [f"<skill>{item.kc}：{KCS[item.kc].name} — {KCS[item.kc].desc}</skill>",
              f"<format>{FORMATS[item.format]}</format>",
              f"<instruction>{item.instruction}</instruction>"]
+    if getattr(item, "focus", ""):
+        parts.append(f"<target_error_type>{item.focus}</target_error_type>")
     if item.content:
         parts.append(f"<material>\n{item.content}\n</material>")
     if item.criteria:
         parts.append(f"<criteria>{item.criteria}</criteria>")
     if item.accepted:
-        parts.append("<reference_answers>\n" + "\n".join(f"- {a}" for a in item.accepted) + "\n</reference_answers>")
+        refs = list(item.accepted)
+        if shuffle_seed:
+            random.Random(shuffle_seed).shuffle(refs)
+        parts.append("<reference_answers note=\"可接受答案的例子，不是全部；和它们不同但同样正确的答案也算对\">\n"
+                     + "\n".join(f"- {a}" for a in refs) + "\n</reference_answers>")
     return "\n".join(parts)
 
 
-def drill_grade_request(item, response: str, attempt_no: int, hints_used: list[str]) -> tuple[str, str]:
+_GRADE_STEPS = {
+    "fix": """判分步骤（按顺序逐条检查，再给分）：
+1. 目标错误改对了吗？（看 target_error_type 和 criteria）
+2. 学生的每一处改动（见 student_edits）有没有引入新的错误？
+3. 原意保留了吗？
+4. 改动是否必要且克制？（大段重写、改变原意都不算改对）
+score 只有 1（四条都满足）或 0。""",
+    "combine": """判分步骤（按顺序逐条检查，再给分）：
+1. 所有信息都保留了吗？
+2. 句子之间的逻辑关系（因果、转折、让步、时间等）表达对了吗？
+3. 合并后的句子语法正确吗（没有逗号连句、没有重复连接词）？
+score 只有 1（三条都满足）或 0。""",
+    "rewrite": """判分步骤：先逐条检查 criteria 里的要求，再给分。
+score：1 = 所有要求都满足；0.5 = 核心要求满足、次要要求有缺；0 = 核心要求没有满足。""",
+    "write": """判分步骤：先逐条检查 criteria 里的要求，再给分。
+score：1 = 所有要求都满足；0.5 = 核心要求满足、次要要求有缺；0 = 核心要求没有满足。""",
+}
+
+
+def drill_grade_request(item, response: str, attempt_no: int, hints_used: list[str], edits: list[str] | None = None,
+                        contested: bool = False) -> tuple[str, str]:
+    steps = _GRADE_STEPS.get(item.format, _GRADE_STEPS["write"])
     task = f"""给一道刷题练习判分。这是学生第 {attempt_no} 次提交。
-- score：1 = 完全达到要求（与参考答案不同但同样正确也算 1），0.5 = 部分达到，0 = 没有达到。
-  只按判分要点和技能目标评判；与本题技能无关的小问题不扣分，但可以在 issue 里顺带提醒。
+{steps}
+- 只按判分要点和本题技能评判。与本题技能无关的小问题不扣分，可以在 issue 里用“另外”顺带提醒一句。
+- 参考答案只是例子：和它们不同但同样正确的答案也算对；和参考答案很像但有错的答案不算对。
+- 没有把握时 uncertain 填 true。
 - issue 和 hint 不能写出改好的句子或答案，只指出方向——学生会根据提示再试一次。
 - 已经给过的提示不要重复，hint 要比它们更进一步但仍不给答案。
 - 所有字段简短：每个字段不超过两句话。"""
+    if contested:
+        task += "\n- 学生认为自己的答案也是对的，请格外仔细地复核：如果答案确实正确，就判 1；如果仍然不对，在 issue 里说清楚是哪一处不对、为什么。"
     hints = "\n".join(f"- {h}" for h in hints_used) or "（无）"
+    edit_block = ""
+    if edits is not None:
+        edit_block = "<student_edits>\n" + ("\n".join(f"{n}. {e}" for n, e in enumerate(edits, 1)) or "（没有改动）") \
+            + "\n</student_edits>\n"
     user = f"""{_item_block(item)}
 <hints_already_given>
 {hints}
 </hints_already_given>
-<student_answer>
+{edit_block}<student_answer>
 {response}
 </student_answer>"""
     return teacher_system(task), user
+
+
+def shuffle_references(user: str, seed: int) -> str:
+    """复核时打乱参考答案的顺序，减少顺序带来的偏差。"""
+    m = re.search(r"(<reference_answers[^>]*>\n)(.*?)(\n</reference_answers>)", user, re.S)
+    if not m:
+        return user
+    refs = m.group(2).split("\n")
+    random.Random(seed).shuffle(refs)
+    return user[:m.start(2)] + "\n".join(refs) + user[m.end(2):]
 
 
 # ---------------- AI 出题 ----------------
 
 _FORMAT_RULES = """各题型要求：
 - mcq（选择题）：3–4 个选项，恰好一个经得起推敲的正确答案（考虑英式和美式用法）；干扰项要像中国学生真的会犯的错，
-  选项是完整句子时尽量做成“最小对立”（只在考查点上不同，其余部分完全正确）；各选项长度和结构相近，不能靠长短或语法线索猜出答案；
-  不用“以上都对/都不对”；option_explanations 用中文逐个解释；正确答案的位置要随机。
+  选项是完整句子时尽量做成“最小对立”（只在考查点上不同，其余部分完全正确）；各选项长度和结构相近（正确选项不能是最长的那个），
+  不能靠长短或措辞线索猜出答案；不用“以上都对/都不对”；option_explanations 用中文逐个解释为什么对或错。
+  冠词、时态、单复数、主谓一致等题，句子里必须有能确定唯一答案的线索（时间状语、上下文、限定词）。
+  “这句话有没有错”类的题，大约每 6 道里有 1 道原句本身是正确的（正确选项是“原句正确，不需要修改”）。
 - judge（当考官）：content 是 60–130 词的短段落（或提纲、论点句 + 主题句），只有一个明显的主要问题；选项是评分式的诊断，只有一个站得住。
 - order（排序）：sentences 按正确顺序给出 4–6 句，只能有一种合理顺序（用代词指代、this/such + 名词、连接词、由总到分等清楚的衔接线索）。
 - fix（改错）：content 只包含一个本技能的错误，其余部分完全正确；accepted 列出所有合理的正确改法（完整句子，包括标点的不同改法），
@@ -167,11 +215,23 @@ def item_solve_request(kc: str, items: list[dict]) -> tuple[str, str]:
     """盲做：只给题目、不给答案，让另一次调用独立作答，再由程序比对标注的答案。"""
     k = KCS[kc]
     task = f"""下面是训练“{k.name}（{k.en}）”的练习题，没有给出答案。请像一个英语很好的考生一样独立作答：
-- 选择题/当考官（mcq/judge）：choice 填你选的选项序号（从 0 开始）。
+- 选择题/当考官（mcq/judge）：choice 填你选的选项序号（从 0 开始）；acceptable 列出所有你认为站得住的选项序号
+  （正常情况下只有一个；如果一个都不对就留空）。
 - 排序题（order）：order 按正确顺序列出句子前面的字母。
 - 改错题（fix）：correction 写出改正后的完整句子，只改必须改的地方。
 - 其他题型：choice 填 -1，其余留空。
 - unique：如果你认为有不止一个站得住的答案（两个选项都可以接受、排序有多种合理顺序、改错题原句没有错或不止一处错），填 false，并在 note 里说明。"""
+    return ITEM_REVIEW_SYSTEM + "\n\n" + task, "<items>\n" + json.dumps(items, ensure_ascii=False) + "\n</items>"
+
+
+def options_only_request(kc: str, items: list[dict]) -> tuple[str, str]:
+    """只给选项、不给材料：如果不看材料也能选出答案，说明题目有线索（比如正确选项更长、更“像答案”）。"""
+    k = KCS[kc]
+    task = f"""下面是训练“{k.name}（{k.en}）”的选择题，但故意没有给出题目材料（段落、作文题等），只有题目要求和选项。
+请判断：只看这些选项，能不能确定哪一个是答案？
+- 能确定：choice 填该选项序号（从 0 开始），并在 note 里说明凭什么（例如只有它写得具体、更长、措辞更像标准答案）。
+- 不能确定（必须看材料才能判断）：choice 填 -1。
+不要猜：没有把握就填 -1。"""
     return ITEM_REVIEW_SYSTEM + "\n\n" + task, "<items>\n" + json.dumps(items, ensure_ascii=False) + "\n</items>"
 
 

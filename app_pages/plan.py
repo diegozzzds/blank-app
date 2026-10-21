@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 from essay_coach import ai, drills, essays, mastery, planner, store, ui
-from essay_coach.items import Item, seed_items, shuffled_order
+from essay_coach.items import Item, option_order, seed_items, shuffled_order
 from essay_coach.prompts import LEVELS
 from essay_coach.skills import KCS
 
@@ -87,7 +87,7 @@ else:
                         ans = st.multiselect("按正确顺序依次选择", order, format_func=lambda i: labels[i][:2],
                                              key=f"diag_{item.id}")
                     else:
-                        ans = st.radio("选项", range(len(item.options)), index=None, key=f"diag_{item.id}",
+                        ans = st.radio("选项", option_order(item, item.id), index=None, key=f"diag_{item.id}",
                                        format_func=lambda i: item.options[i], label_visibility="collapsed")
                     c1, c2 = st.columns([1, 4])
                     incomplete = item.format == "order" and len(ans or []) != len(item.sentences)

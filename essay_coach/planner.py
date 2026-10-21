@@ -40,8 +40,26 @@ def weeks_available(profile: dict) -> int:
     return DEFAULT_WEEKS
 
 
+# 学习者语料研究：基础阶段最常见、最影响理解的是主谓一致、单复数、时态与动词形式、句子边界、中式句型；
+# 中高级阶段错误集中在搭配、冠词的泛指用法、限定语气、连接词、语体和反驳（得分权重也更多在篇章层）。
+BASIC_FOCUS = {"sv_agree", "noun_number", "verb_tense", "sent_boundary", "chinglish_struct"}
+ADVANCED_FOCUS = {"collocation", "hedging", "transitions", "register", "word_precision", "counterargument",
+                  "critical_questions"}
+
+
+def level_weight(level: str | None, kc: str) -> float:
+    """没有诊断证据时，按学生水平调整先验：低水平先打基础，高水平侧重高阶问题。"""
+    basic = level in ("初中", "高中")
+    if kc in BASIC_FOCUS:
+        return 1.3 if basic else 0.9
+    if kc in ADVANCED_FOCUS:
+        return 0.8 if basic else 1.25
+    return 1.0
+
+
 def need_scores(progress: dict) -> dict[str, float]:
-    """每个技能点的需要程度：没掌握的程度 × 诊断证据/先验 × 薄弱维度权重。"""
+    """每个技能点的需要程度：没掌握的程度 × 诊断证据/先验（按水平调整）× 薄弱维度权重。"""
+    level = (progress.get("profile") or {}).get("level")
     diag = progress.get("diagnostic") or {}
     weak_kcs = set(diag.get("weak_kcs", []))
     strong_kcs = set(diag.get("strong_kcs", []))
@@ -51,7 +69,7 @@ def need_scores(progress: dict) -> dict[str, float]:
         st = progress["kc"].get(k) or {}
         tier = st.get("tier", "new")
         not_mastered = 1 - mastery.TIER_RANK[tier] / (len(mastery.TIERS) - 1)
-        evidence = 1.5 if k in weak_kcs else (0.2 if k in strong_kcs else 0.4 + 0.5 * kc.prior)
+        evidence = 1.5 if k in weak_kcs else (0.2 if k in strong_kcs else (0.4 + 0.5 * kc.prior) * level_weight(level, k))
         crit = max((crit_gap.get(c, 0.5) for c in kc.criteria), default=0.5)
         scores[k] = round(not_mastered * evidence * (0.5 + crit), 3)
     return scores

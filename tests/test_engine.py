@@ -23,6 +23,14 @@ def bank(kc):
     return [i for i in seed_items() if i.kc == kc]
 
 
+def synth(kc, n, fmt="mcq", start=0):
+    """造 n 道不同的题（测试掌握度时每题只能算一次证据）。"""
+    base = bank(kc)[0]
+    return [base.model_copy(update={"id": f"{kc}-syn-{fmt}-{start + i}", "format": fmt,
+                                    "accepted": ["x"] if fmt == "fix" else base.accepted,
+                                    "content": base.content or "c"}) for i in range(n)]
+
+
 def test_skill_graph_is_acyclic_and_ordered():
     order = topo_order()
     assert sorted(order) == sorted(KCS)
@@ -32,14 +40,17 @@ def test_skill_graph_is_acyclic_and_ordered():
 
 
 def test_learned_then_retained_then_transferred(progress):
-    items = bank("sent_boundary")
-    for n in range(8):
-        st = mastery.record(progress, items[n % 4] if n < 4 else items[4 if n == 4 else n % 4], 1.0, 0, False,
-                            True, 20, when=T0 + timedelta(minutes=n))
-    # 只有 5 道不同的题：连续独立答对 ≥4 道不同的题、指数平均 ≥0.85 → 已学会
+    items = synth("sent_boundary", 10)
+    st = mastery.record(progress, items[0], 0.0, 0, False, True, 20, when=T0)  # 一开始错了一题：要连续对 5 题
+    for n in range(1, 5):
+        st = mastery.record(progress, items[n], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=n))
+    assert st["tier"] == "learning"
+    st = mastery.record(progress, items[5], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=5))
     assert st["tier"] == "learned"
-    for d in (2, 5):
-        st = mastery.record(progress, items[0], 1.0, 0, False, True, 20, when=T0 + timedelta(days=d))
+    st = mastery.record(progress, items[1], 1.0, 0, False, True, 20, when=T0 + timedelta(days=2))
+    assert st["reviews_ok"] == []  # 复习做的是见过的题：不算巩固
+    for n, d in enumerate((3, 5, 8)):
+        st = mastery.record(progress, items[6 + n], 1.0, 0, False, True, 20, when=T0 + timedelta(days=d))
     assert st["tier"] == "retained"
     mastery.mark_transfer(progress, "sent_boundary", True)
     assert progress["kc"]["sent_boundary"]["tier"] == "transferred"
@@ -223,15 +234,16 @@ def test_strong_student_still_gets_a_plan(progress):
 
 
 def test_retained_needs_real_gap_not_just_midnight(progress):
-    items = bank("sent_boundary")
-    for n in range(6):
-        mastery.record(progress, items[n % 5], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=n))
+    items = synth("sent_boundary", 8)
+    for n in range(3):  # 一开始就连续答对 3 题：已学会
+        mastery.record(progress, items[n], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=n))
     st = progress["kc"]["sent_boundary"]
     assert st["tier"] == "learned"
     late = T0.replace(hour=15, minute=58)  # 北京时间 23:58
-    mastery.record(progress, items[0], 1.0, 0, False, True, 20, when=late + timedelta(days=1))
-    mastery.record(progress, items[1], 1.0, 0, False, True, 20, when=late + timedelta(days=1, minutes=5))
-    assert st["tier"] == "learned"
+    mastery.record(progress, items[3], 1.0, 0, False, True, 20, when=late + timedelta(days=1))
+    mastery.record(progress, items[4], 1.0, 0, False, True, 20, when=late + timedelta(days=1, minutes=5))
+    mastery.record(progress, items[5], 1.0, 0, False, True, 20, when=late + timedelta(days=1, minutes=10))
+    assert st["tier"] == "learned" and len(st["reviews_ok"]) == 1
 
 
 def test_streak_freeze_covers_yesterday(progress):
@@ -278,19 +290,19 @@ def test_assisted_correct_does_not_raise_mastery(progress):
 
 
 def test_ai_score_just_above_threshold_counts_as_correct(progress):
-    items = bank("thesis")
-    for n in range(6):
-        st = mastery.record(progress, items[n % 4], 0.8, 0, False, None, 30, when=T0 + timedelta(minutes=n))
-    assert st["ema"] >= mastery.LEARNED_EMA
+    items = synth("thesis", 3, "write")
+    for n in range(3):
+        st = mastery.record(progress, items[n], 0.8, 0, False, None, 30, when=T0 + timedelta(minutes=n))
+    assert st["streak"] == 3 and st["tier"] == "learned"
 
 
 def test_failed_review_resets_retention_progress(progress):
-    items = bank("sent_boundary")
-    for n in range(6):
-        mastery.record(progress, items[n % 5], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=n))
-    st = mastery.record(progress, items[0], 1.0, 0, False, True, 20, when=T0 + timedelta(days=2))
+    items = synth("sent_boundary", 6)
+    for n in range(3):
+        mastery.record(progress, items[n], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=n))
+    st = mastery.record(progress, items[3], 1.0, 0, False, True, 20, when=T0 + timedelta(days=2))
     assert len(st["reviews_ok"]) == 1
-    st = mastery.record(progress, items[1], 0.0, 0, False, True, 20, when=T0 + timedelta(days=4))
+    st = mastery.record(progress, items[4], 0.0, 0, False, True, 20, when=T0 + timedelta(days=4))
     assert st["reviews_ok"] == [] and st["tier"] == "learned"
 
 
@@ -457,8 +469,8 @@ def test_blind_solver_disagreement_drops_item(progress, monkeypatch):
 
     # 盲做者第 1 题选了别的选项：说明答案可能有问题，这题不能用
     monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
-        {"index": 1, "choice": 0, "order": [], "correction": "", "unique": True, "note": ""},
-        {"index": 2, "choice": 0, "order": [], "correction": "", "unique": True, "note": ""}]})
+        {"index": 1, "choice": 0, "acceptable": [0], "order": [], "correction": "", "unique": True, "note": ""},
+        {"index": 2, "choice": 0, "acceptable": [0], "order": [], "correction": "", "unique": True, "note": ""}]})
     monkeypatch.setitem(fake_claude.SAMPLES, "ItemCheckBatch", lambda req: {"results": [
         {"index": 1, "ok": True, "problem": "", "also_accept": []}]})
     made = drills.run_generation(fake_claude.FakeClient(), _gen_req(progress))
@@ -471,8 +483,8 @@ def test_solver_flags_ambiguity(progress, monkeypatch):
     import fake_claude
 
     monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
-        {"index": 1, "choice": 2, "order": [], "correction": "", "unique": False, "note": "B 也可以"},
-        {"index": 2, "choice": 0, "order": [], "correction": "", "unique": False, "note": "两个都对"}]})
+        {"index": 1, "choice": 2, "acceptable": [1, 2], "order": [], "correction": "", "unique": False, "note": "B 也可以"},
+        {"index": 2, "choice": 0, "acceptable": [0, 1], "order": [], "correction": "", "unique": False, "note": "两个都对"}]})
     assert drills.run_generation(fake_claude.FakeClient(), _gen_req(progress)) == []
 
 
@@ -485,7 +497,8 @@ def test_fix_items_gain_reviewer_alternatives(progress, monkeypatch):
            "hints": ["h1", "h2", "h3"], "explanation": "e", "focus": "逗号连句"}
     monkeypatch.setitem(fake_claude.SAMPLES, "ItemBatch", lambda req: {"items": [fix]})
     monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
-        {"index": 1, "choice": -1, "order": [], "correction": "It rained; we stayed home.", "unique": True, "note": ""}]})
+        {"index": 1, "choice": -1, "acceptable": [], "order": [], "correction": "It rained; we stayed home.", "unique": True,
+         "note": ""}]})
     monkeypatch.setitem(fake_claude.SAMPLES, "ItemCheckBatch", lambda req: {"results": [
         {"index": 1, "ok": True, "problem": "", "also_accept": ["It rained; we stayed home.", "It rained, we stayed home."]}]})
     made = drills.run_generation(fake_claude.FakeClient(), _gen_req(progress, "sent_boundary"))
@@ -526,10 +539,10 @@ def test_repeats_prefer_least_recently_seen(progress):
 
 
 def test_low_pool_triggers_prefetch(progress):
-    session = drills.new_session("kc", "articles")
-    assert drills.low_kcs(progress, session, ai_ready=True) == []  # 还有 4 道没做过
-    progress["items"][bank("articles")[0].id] = {"b": 0.0, "n": 1}
-    assert drills.low_kcs(progress, session, ai_ready=True) == ["articles"]
+    session = drills.new_session("kc", "sent_boundary")
+    assert drills.low_kcs(progress, session, ai_ready=True) == []  # 还有 5 道没做过
+    progress["items"][bank("sent_boundary")[0].id] = {"b": 0.0, "n": 1}
+    assert drills.low_kcs(progress, session, ai_ready=True) == ["sent_boundary"]
     assert drills.low_kcs(progress, session, ai_ready=False) == []
 
 
@@ -557,3 +570,168 @@ def test_without_focus_alternates_error_types(progress, monkeypatch):
     progress["attempts"].append({"t": T0.isoformat(), "item": items[0].id, "kc": "articles", "focus": "零冠词"})
     progress["items"][items[0].id] = {"b": 0.0, "n": 1}
     assert drills.pick_item(progress, "articles", set(), False).focus == "泛指复数"
+
+
+def test_repeated_item_is_not_mastery_evidence(progress):
+    item = synth("articles", 1)[0]
+    mastery.record(progress, item, 1.0, 0, False, True, 20, when=T0)
+    b = progress["items"][item.id]["b"]
+    for n in range(1, 6):
+        st = mastery.record(progress, item, 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=n))
+    assert st["streak"] == 1 and st["tier"] == "learning"  # 同一道题反复做对：不算学会
+    assert progress["items"][item.id]["b"] == b  # 题目难度只用第一次作答校准
+
+
+def test_learned_requires_a_production_item_when_available(progress):
+    mcq = synth("sent_boundary", 6)
+    for n in range(5):
+        st = mastery.record(progress, mcq[n], 1.0 if n else 0.0, 0, False, True, 20, when=T0 + timedelta(minutes=n),
+                            require_production=True)
+    st = mastery.record(progress, mcq[5], 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=6),
+                        require_production=True)
+    assert st["streak"] == 5 and st["tier"] == "learning"  # 5 道都是选择题：还要做对一道改错题
+    fix = synth("sent_boundary", 1, "fix")[0]
+    st = mastery.record(progress, fix, 1.0, 0, False, True, 20, when=T0 + timedelta(minutes=7),
+                        require_production=True)
+    assert st["tier"] == "learned"
+
+
+def test_ai_items_start_with_weaker_difficulty_prior(progress):
+    seed = synth("articles", 1)[0].model_copy(update={"difficulty": 5})
+    ai_item = seed.model_copy(update={"id": "ai-x", "source": "ai"})
+    assert mastery.item_difficulty(progress, ai_item) < mastery.item_difficulty(progress, seed)
+
+
+def _attempt(progress, kc, ok, when=None):
+    progress["attempts"].append({"t": (when or store.now()).isoformat(), "item": f"x{len(progress['attempts'])}",
+                                 "kc": kc, "score": 1.0 if ok else 0.0, "hints": 0, "wrong": 0, "revealed": False})
+
+
+def test_stuck_skill_rests_for_today(progress):
+    progress["plan"] = {"weeks": [{"kcs": ["articles", "sent_boundary"]}], "current_week": 0}
+    for _ in range(drills.STUCK_WRONG):
+        _attempt(progress, "articles", False)
+    assert drills.rest_reason(progress, "articles")
+    kcs = [c[0] for c in drills.candidate_kcs(progress, drills.new_session("today"), ai_ready=False)]
+    assert "articles" not in kcs and "sent_boundary" in kcs
+    # 昨天的作答不影响今天
+    yesterday = drills.new_session("today")
+    progress["attempts"].clear()
+    for _ in range(drills.STUCK_WRONG):
+        _attempt(progress, "articles", False, store.now() - timedelta(days=1))
+    assert drills.rest_reason(progress, "articles") is None
+    assert "articles" in [c[0] for c in drills.candidate_kcs(progress, yesterday, ai_ready=False)]
+
+
+def test_daily_cap_and_learned_skills_move_on(progress):
+    for n in range(drills.DAILY_CAP):
+        _attempt(progress, "articles", n % 2 == 0)
+    assert drills.rest_reason(progress, "articles")
+    progress["attempts"].clear()
+    mastery.kc_state(progress, "sent_boundary")["tier"] = "learned"
+    for _ in range(drills.CONFIRM_AFTER_LEARNED):
+        _attempt(progress, "sent_boundary", True)
+    assert drills._enough_today(progress, "sent_boundary")
+
+
+def test_reviews_capped_at_half_a_session(progress):
+    session = drills.new_session("today")
+    session["count"] = 4
+    session["log"] = [{"kc": "articles", "reason": "错题复习"}] * 2 + [{"kc": "thesis", "reason": "本周学习目标"}] * 2
+    progress["plan"] = {"weeks": [{"kcs": ["sent_boundary"]}], "current_week": 0}
+    m = drills.add_mistake(progress, "articles", "x", "n", "drill")
+    m["card"]["due"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    it, reason, *_ = drills.next_item(progress, session, ai_ready=False)
+    assert reason != "错题复习"
+
+
+def test_solver_sees_shuffled_options_and_must_reject_other_options(progress, monkeypatch):
+    import json as _json
+
+    import fake_claude
+
+    monkeypatch.setattr(drills, "SHUFFLE_FOR_SOLVER", True)
+    right = {"C z", "A"}  # 两道假题的正确选项
+
+    def smart(req, also=None):
+        items = _json.loads(req["messages"][0]["content"].split("<items>")[1].split("</items>")[0])
+        out = []
+        for v in items:
+            pick = next(int(o.split(". ", 1)[0]) for o in v["options"] if o.split(". ", 1)[1] in right)
+            acc = [pick] + ([int(o.split(". ", 1)[0]) for o in v["options"] if o.split(". ", 1)[1] == also] if also else [])
+            out.append({"index": v["index"], "choice": pick, "acceptable": acc, "order": [], "correction": "",
+                        "unique": True, "note": ""})
+        return {"results": out}
+
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", smart)
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemCheckBatch", lambda req: {"results": [
+        {"index": 1, "ok": True, "problem": "", "also_accept": []}, {"index": 2, "ok": True, "problem": "", "also_accept": []}]})
+    assert len(drills.run_generation(fake_claude.FakeClient(), _gen_req(progress))) == 2
+    # 盲做者认为另一个选项也站得住：不能用
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: smart(req, also="B y"))
+    made = drills.run_generation(fake_claude.FakeClient(), _gen_req(progress))
+    assert [m["instruction"] for m in made] == ["第二题"]
+
+
+def test_length_cue_items_are_rejected(progress, monkeypatch):
+    import fake_claude
+
+    cue = {"format": "mcq", "difficulty": 3, "instruction": "选最好的论点句", "content": "",
+           "options": ["Yes.", "No.", "Zoos should be reformed rather than closed because they fund conservation."],
+           "answer": 2, "option_explanations": ["a", "b", "c"], "sentences": [], "accepted": [], "criteria": "",
+           "hints": ["h1", "h2", "h3"], "explanation": "e", "focus": "f"}
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemBatch", lambda req: {"items": [cue]})
+    assert drills.run_generation(fake_claude.FakeClient(), _gen_req(progress)) == []
+
+
+def test_answerable_without_content_is_rejected(progress, monkeypatch):
+    import fake_claude
+
+    para = {"format": "judge", "difficulty": 3, "instruction": "这段话最主要的问题是什么？", "content": "A paragraph " * 10,
+            "options": ["It lacks a topic sentence.", "It has no evidence at all.", "It wanders off topic here."],
+            "answer": 1, "option_explanations": ["a", "b", "c"], "sentences": [], "accepted": [], "criteria": "",
+            "hints": ["h1", "h2", "h3"], "explanation": "e", "focus": "f"}
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemBatch", lambda req: {"items": [para]})
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
+        {"index": 1, "choice": 1, "acceptable": [1], "order": [], "correction": "", "unique": True, "note": ""}]})
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemCheckBatch", lambda req: {"results": [
+        {"index": 1, "ok": True, "problem": "", "also_accept": []}]})
+    assert len(drills.run_generation(fake_claude.FakeClient(), _gen_req(progress, "unity"))) == 1
+    monkeypatch.setitem(fake_claude.SAMPLES, "OptionGuessBatch", lambda req: {"results": [
+        {"index": 1, "choice": 1, "note": "只有它写得最像答案"}]})
+    assert drills.run_generation(fake_claude.FakeClient(), _gen_req(progress, "unity")) == []
+
+
+def test_edit_summary_lists_word_changes():
+    edits = drills.edit_summary("It rained, we stayed home.", "It rained, so we stayed home.")
+    assert edits == ["（无） → so"]
+    assert drills.edit_summary("a b c", "a b c") == []
+
+
+def test_open_grades_use_coarse_levels_and_borderline_consensus(progress, monkeypatch):
+    import fake_claude
+
+    fix = synth("sent_boundary", 1, "fix")[0]
+    scores = iter([0.6, 1.0, 1.0])
+    monkeypatch.setitem(fake_claude.SAMPLES, "DrillGrade", lambda req: {
+        "score": next(scores), "uncertain": False, "verdict": "v", "good": "", "issue": "", "hint": "", "rule": ""})
+    g = drills.grade_open(fix, "It rained, so we stayed home.", 1, [])
+    assert g.score == 1.0 and not g.uncertain  # 第一次 0.6（改错只有对错 → 0），复核两次都对：取中位数
+    assert sum(1 for c in fake_claude.CALLS if c["output_config"].get("format")) == 3
+    rewrite = fix.model_copy(update={"format": "rewrite"})
+    monkeypatch.setitem(fake_claude.SAMPLES, "DrillGrade", lambda req: {
+        "score": 0.62, "uncertain": False, "verdict": "v", "good": "", "issue": "", "hint": "", "rule": ""})
+    assert drills.grade_open(rewrite, "x", 1, []).score == 0.5
+
+
+def test_persistent_error_types_need_an_extra_day():
+    assert drills.retire_after("articles") == drills.MISTAKE_RETIRE_REVIEWS + 1
+    assert drills.retire_after("sv_agree") == drills.MISTAKE_RETIRE_REVIEWS
+
+
+def test_level_shifts_priorities_without_diagnostic(progress):
+    progress["profile"]["level"] = "初中"
+    low = planner.need_scores(progress)
+    progress["profile"]["level"] = "雅思/托福备考"
+    high = planner.need_scores(progress)
+    assert low["sv_agree"] > high["sv_agree"] and high["collocation"] > low["collocation"]

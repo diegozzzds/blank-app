@@ -37,6 +37,7 @@ DEFAULT = {
     "chat": [],            # 写作导师对话
     "focus_kcs": [],       # 最近一篇作文暴露的弱项，刷题时优先
     "flagged_items": [],   # 学生报告有问题的题目，不再出现
+    "extra_accepted": {},  # 复核后认定正确的答案：item_id -> [答案]
     "rev": 0,              # 修订号：防止多个标签页互相覆盖
 }
 MAX_ATTEMPTS = 3000

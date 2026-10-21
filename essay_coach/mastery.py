@@ -4,10 +4,14 @@
   P(答对) = g + (1 - g)·σ(θ - b)，选择题的 g = 1/选项数（猜对概率）。
 - 只用“独立完成”的表现计算掌握度：看了提示、答错后才改对、看了答案，都按“没有独立做对”计入能力值和
   正确率（Bastani et al. 2025：有帮助时的正确率会制造“学会了”的错觉）；这些作答单独统计为“有帮助”。
-- 三级掌握（参考 Bloom 掌握学习 + 连续正确标准）：
-    已学会 learned：独立正确率的指数平均 ≥ 0.85，且连续独立答对 ≥ 4 道不同的题
-    已巩固 retained：学会后，在间隔 ≥ 1 天的两次复习里首题都独立答对
+- 只有“第一次见到的题”才算掌握证据：做过的题再出现时，答对可能只是记住了答案（Chen, West & Zilles 2018），
+  所以重复题不计入连续答对、指数平均和复习成功，也不更新题目难度（Papoušek et al. 2014 只用首次作答校准）。
+- 三级掌握（参考 Bloom 掌握学习 + ALEKS / ASSISTments 的连续正确标准）：
+    已学会 learned：连续独立答对 5 道没见过的不同题目（如果这个技能一开始的 3 题就都独立答对，3 道即可）；
+                    技能有产出型题目（改错、合并、改写、写作）时，其中至少 1 道是产出型
+    已巩固 retained：学会后，在间隔 ≥ 20 小时的三次复习里首题都独立答对（Rawson & Dunlosky 2011 的连续重新学习）
     已迁移 transferred：在一篇独立完成的作文里用对了这个技能（作文批改给出证据）
+- 指数平均按题型加权：产出型题目比选择题提供更多证据（Pelánek & Řihák 2018 的做法），用于判断是否明显退步。
 - 复习安排：每个技能点一张 FSRS 卡片（py-fsrs，desired_retention 0.9），每天只用当天该技能的第一题打分，
   间隔不超过离考试天数的 20%（Cepeda et al. 2008：间隔应与保持时长成比例）。
 """
@@ -29,34 +33,42 @@ TIERS = {
 }
 TIER_RANK = {k: i for i, k in enumerate(TIERS)}
 
-EMA_ALPHA = 0.3
 REVIEW_GAP = timedelta(hours=20)
-LEARNED_EMA = 0.85
-LEARNED_STREAK = 4
-RETAINED_REVIEWS = 2
+LEARNED_STREAK = 5
+LEARNED_STREAK_FAST = 3   # 一开始就连续答对的学生（已经会了）不用多做
+RETAINED_REVIEWS = 3
+REPEAT_WEIGHT = 0.25      # 做过的题再出现：只用很小的权重更新能力值
+PRODUCTION = {"fix", "combine", "rewrite", "write"}
+# 指数平均的权重：选择题信息量小，产出型题目信息量大
+EMA_WEIGHT = {"mcq": 0.2, "judge": 0.2, "order": 0.3, "fix": 0.3, "combine": 0.3, "rewrite": 0.4, "write": 0.4}
 
 
 def _sigmoid(x: float) -> float:
     return 1 / (1 + math.exp(-x))
 
 
-def seed_difficulty(level: int) -> float:
-    """题目标注难度 1–5 → 初始 Elo 难度。"""
-    return (level - 3) * 0.8
+def seed_difficulty(level: int, source: str = "seed") -> float:
+    """题目标注难度 1–5 → 初始 Elo 难度。
+
+    标注难度是 AI 估计的，和真实难度相关性很弱（An & Wang 2026；BEA 2024 难度预测共享任务），
+    所以只作为较弱的先验：种子题（经过多轮核对）每级 0.5，运行时 AI 新题每级 0.25，之后由作答数据校准。
+    """
+    return (level - 3) * (0.5 if source == "seed" else 0.25)
 
 
 def kc_state(progress: dict, kc: str) -> dict:
     state = progress["kc"].setdefault(kc, {})
     for key, default in (("theta", 0.0), ("n", 0), ("ema", 0.0), ("streak", 0), ("tier", "new"),
                          ("learned_at", None), ("reviews_ok", []), ("card", None), ("last_day", None),
-                         ("solo_n", 0), ("solo_ok", 0), ("help_n", 0), ("help_ok", 0), ("streak_items", [])):
+                         ("solo_n", 0), ("solo_ok", 0), ("help_n", 0), ("help_ok", 0), ("streak_items", []),
+                         ("first_results", []), ("streak_prod", False), ("fails", 0)):
         state.setdefault(key, default)
     return state
 
 
 def item_difficulty(progress: dict, item) -> float:
     rec = progress["items"].get(item.id)
-    return rec["b"] if rec else seed_difficulty(item.difficulty)
+    return rec["b"] if rec else seed_difficulty(item.difficulty, getattr(item, "source", "seed"))
 
 
 def guess_rate(item) -> float:
@@ -146,25 +158,35 @@ def card_due(card: dict | None, when: datetime, progress: dict | None = None) ->
 
 
 def record(progress: dict, item, score: float, hints: int, revealed: bool,
-           confident: bool | None = None, seconds: float | None = None, when: datetime | None = None) -> dict:
-    """记录一次作答，更新能力值、题目难度、掌握等级和复习卡片。返回该技能点的新状态。"""
+           confident: bool | None = None, seconds: float | None = None, when: datetime | None = None,
+           require_production: bool = False) -> dict:
+    """记录一次作答，更新能力值、题目难度、掌握等级和复习卡片。返回该技能点的新状态。
+
+    require_production：这个技能现在有可做的产出型题目，“已学会”的连续答对里必须至少有一道产出型题目。
+    """
     when = when or datetime.now(timezone.utc)
     day = study_day(when).isoformat()
     st = kc_state(progress, item.kc)
     o = outcome_value(score, hints, revealed)
     solo = hints == 0 and not revealed
+    correct = score >= 0.8
     p = p_correct(progress, item)
+    first = item.id not in progress["items"]  # 这个学生第一次做这道题
 
-    # Elo：不确定性随作答次数下降
+    # Elo：不确定性随作答次数下降；题目难度只用首次作答校准，重复题只小幅更新能力值
     k_student = 1 / (1 + 0.05 * st["n"])
-    rec = progress["items"].setdefault(item.id, {"b": seed_difficulty(item.difficulty), "n": 0})
-    k_item = 1 / (1 + 0.05 * rec["n"])
-    st["theta"] += k_student * (o - p)
-    rec["b"] -= k_item * (o - p) * 0.5
+    rec = progress["items"].setdefault(item.id, {"b": item_difficulty(progress, item), "n": 0})
+    if first:
+        k_item = 1 / (1 + 0.05 * rec["n"])
+        st["theta"] += k_student * (o - p)
+        rec["b"] -= k_item * (o - p) * 0.5
+    else:
+        st["theta"] += REPEAT_WEIGHT * k_student * (o - p)
     st["n"] += 1
     rec["n"] += 1
+    if first and solo and not correct and p >= 0.9:
+        rec["surprise"] = True  # 预计几乎肯定会对却错了：题目可能有问题，留作核查信号
 
-    correct = score >= 0.8
     if solo:
         st["solo_n"] += 1
         st["solo_ok"] += int(correct)
@@ -172,46 +194,60 @@ def record(progress: dict, item, score: float, hints: int, revealed: bool,
         st["help_n"] += 1
         st["help_ok"] += int(correct and not revealed)
 
-    # 掌握判断用“独立做对”的二值结果（AI 判 0.8 以上算对），否则 0.80–0.84 的答案永远达不到 0.85
-    st["ema"] = (1 - EMA_ALPHA) * st["ema"] + EMA_ALPHA * (1.0 if solo and correct else 0.0)
-    if solo and correct:
+    # 掌握证据只看第一次见到的题（AI 判 0.8 以上算对）
+    good = solo and correct
+    if first:
+        w = EMA_WEIGHT.get(item.format, 0.3)
+        st["ema"] = (1 - w) * st["ema"] + w * (1.0 if good else 0.0)
+        if len(st["first_results"]) < LEARNED_STREAK_FAST:
+            st["first_results"].append(good)
+        st["fails"] = 0 if good else st["fails"] + 1
+    if good and first:
         if item.id not in st["streak_items"]:
             st["streak_items"].append(item.id)
-        st["streak"] = len(st["streak_items"])
-    else:
+        st["streak_prod"] = st["streak_prod"] or item.format in PRODUCTION
+    elif not good:
         st["streak_items"] = []
-        st["streak"] = 0
+        st["streak_prod"] = False
+    st["streak"] = len(st["streak_items"])
 
     # 每天只用第一题更新复习卡片
     first_today = st["last_day"] != day
     if first_today:
         fast = seconds is not None and seconds < 45
         st["card"] = review_card(progress, st["card"], _rating(score, hints, revealed, confident, fast), when)
-        # “隔天复习”：与学会时间、上一次成功复习都至少间隔 REVIEW_GAP，避免跨午夜几分钟就算两天
-        if st["learned_at"] and solo and correct:
+        # “隔天复习”：与学会时间、上一次成功复习都至少间隔 REVIEW_GAP，避免跨午夜几分钟就算两天；
+        # 复习必须是没见过的题，才能说明记住的是技能而不是这道题
+        if st["learned_at"] and good and first:
             last = st["reviews_ok"][-1] if st["reviews_ok"] else st["learned_at"]
             if when - _parse(last) >= REVIEW_GAP:
                 st["reviews_ok"].append(when.isoformat())
-        elif st["learned_at"]:
-            st["reviews_ok"] = []  # 复习没做对：“巩固”要重新攒两次
+        elif st["learned_at"] and not good:
+            st["reviews_ok"] = []  # 复习没做对：“巩固”要重新攒
         st["last_day"] = day
 
-    _update_tier(st, when)
+    _update_tier(st, when, require_production)
     return st
 
 
-def _update_tier(st: dict, when: datetime) -> None:
+def learned_now(st: dict, require_production: bool = False) -> bool:
+    need = LEARNED_STREAK_FAST if (len(st["first_results"]) >= LEARNED_STREAK_FAST and all(st["first_results"])) \
+        else LEARNED_STREAK
+    return st["streak"] >= need and (st["streak_prod"] or not require_production)
+
+
+def _update_tier(st: dict, when: datetime, require_production: bool = False) -> None:
     tier = st["tier"]
     if st["n"] and tier == "new":
         tier = "learning"
-    if TIER_RANK[tier] < TIER_RANK["learned"] and st["ema"] >= LEARNED_EMA and st["streak"] >= LEARNED_STREAK:
+    if TIER_RANK[tier] < TIER_RANK["learned"] and learned_now(st, require_production):
         tier = "learned"
         st["learned_at"] = when.isoformat()
         st["reviews_ok"] = []
     if tier == "learned" and len(st["reviews_ok"]) >= RETAINED_REVIEWS:
         tier = "retained"
-    # 学会后又明显退步：退回练习中，重新达标
-    if TIER_RANK[tier] >= TIER_RANK["learned"] and st["ema"] < 0.5 and st["streak"] == 0:
+    # 学会后又明显退步（连续两道没见过的题都没能独立做对）：退回练习中，重新达标
+    if TIER_RANK[tier] >= TIER_RANK["learned"] and st["fails"] >= 2:
         tier = "learning"
         st["learned_at"] = None
         st["reviews_ok"] = []

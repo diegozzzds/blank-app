@@ -21,6 +21,9 @@ def fixture_bank(monkeypatch):
     items.seed_items.cache_clear()
     items.rule_cards.cache_clear()
     monkeypatch.setattr(ai, "_client", lambda key: fake_claude.FakeClient())
+    from essay_coach import drills
+
+    monkeypatch.setattr(drills, "SHUFFLE_FOR_SOLVER", False)  # 假客户端的盲做答案按原始选项顺序写
     fake_claude.CALLS.clear()
     yield
     items.seed_items.cache_clear()

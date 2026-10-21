@@ -35,7 +35,7 @@ def feedback():
     }
 
 SAMPLES = {
-    "DrillGrade": lambda req: {"score": 1.0 if "although" in json.dumps(req["messages"]).lower() else 0.3,
+    "DrillGrade": lambda req: {"score": 1.0 if "although" in json.dumps(req["messages"]).lower() else 0.3, "uncertain": False,
                                "verdict": "v", "good": "好", "issue": "还缺少让步", "hint": "试试 although", "rule": "规则"},
     "ItemBatch": lambda req: {"items": [
         {"format": "mcq", "difficulty": 3, "instruction": "选出正确的句子", "content": "", "options": ["A x", "B y", "C z"],
@@ -47,8 +47,9 @@ SAMPLES = {
          "hints": ["h1", "h2", "h3"], "explanation": "AI rule 2", "focus": "f2"}]},
     # 盲做：两道题都答对标注的答案；审核：第 2 题不合格
     "ItemSolveBatch": lambda req: {"results": [
-        {"index": 1, "choice": 2, "order": [], "correction": "", "unique": True, "note": ""},
-        {"index": 2, "choice": 0, "order": [], "correction": "", "unique": True, "note": ""}]},
+        {"index": 1, "choice": 2, "acceptable": [2], "order": [], "correction": "", "unique": True, "note": ""},
+        {"index": 2, "choice": 0, "acceptable": [0], "order": [], "correction": "", "unique": True, "note": ""}]},
+    "OptionGuessBatch": lambda req: {"results": []},  # 只看选项时猜不出答案
     "ItemCheckBatch": lambda req: {"results": [{"index": 1, "ok": True, "problem": "", "also_accept": []},
                                                {"index": 2, "ok": False, "problem": "答案不唯一", "also_accept": []}]},
     "StudyPlan": lambda req: {"overview": "AI 计划概述", "daily_routine": "每天 20 分钟", "milestones": ["m1", "m2"],

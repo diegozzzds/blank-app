@@ -105,3 +105,27 @@ def shuffled_order(item: Item, seed: str) -> list[int]:
         if idx != sorted(idx):
             break
     return idx
+
+
+def option_order(item: Item, seed: str) -> list[int]:
+    """选择题的展示顺序（稳定：同一题同一次练习顺序不变）。
+
+    题库里正确答案的位置和长短可能有规律（AI 写的题尤其如此），展示时打乱可以去掉位置线索。
+    """
+    idx = list(range(len(item.options)))
+    random.Random(f"options|{seed}").shuffle(idx)
+    return idx
+
+
+def length_cue(item: Item) -> bool:
+    """正确选项明显比其他选项都长（或都短）：学生不读题也能猜出答案。
+
+    阈值参考研究建议：相差 ≥ 20% 且 ≥ 5 个字符。题库里曾有一半多的题“选最长的就对”。
+    """
+    if item.format not in ("mcq", "judge") or len(item.options) < 2 or not 0 <= item.answer < len(item.options):
+        return False
+    key = len(item.options[item.answer])
+    others = [len(o) for i, o in enumerate(item.options) if i != item.answer]
+    longest = key >= 1.2 * max(others) and key - max(others) >= 5
+    shortest = key <= 0.8 * min(others) and min(others) - key >= 5
+    return longest or shortest

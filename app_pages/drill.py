@@ -3,7 +3,7 @@ import time
 import streamlit as st
 
 from essay_coach import ai, drills, jobs, mastery, store, ui
-from essay_coach.items import Item, shuffled_order
+from essay_coach.items import Item, option_order, shuffled_order
 from essay_coach.skills import AUTO_GRADED, KCS
 
 progress = store.progress()
@@ -34,6 +34,7 @@ if "drill" not in ss:
 else:
     session = ss["drill"]
     ai_ready = ai.is_ready()
+    session["ai_ready"] = ai_ready  # 判断“已学会”是否要求产出型题目时用
 
     top = st.columns([3, 1], vertical_alignment="center")
     with top[0]:
@@ -64,6 +65,8 @@ else:
     _, failed = jobs.collect(progress)
     gen_tried.extend(k for k in failed if k not in gen_tried)
 
+    if session["mode"] == "kc" and session.get("kc") and (why := drills.rest_reason(progress, session["kc"])):
+        st.info(why, icon=":material/self_improvement:")
     if busy := jobs.running_kcs():
         st.caption("⏳ 后台正在为 " + "、".join(KCS[k].name for k in busy if k in KCS) + " 准备新题（出完会盲做核对），不影响你继续做题。")
 
@@ -99,7 +102,7 @@ else:
             session["current"] = cur
 
     if cur:
-        item = Item.model_validate(cur["item"])
+        item = drills.with_extra_accepted(progress, Item.model_validate(cur["item"]))  # 含复核后认定正确的答案
         mistake = next((m for m in progress["mistakes"] if m["id"] == cur["mistake_id"]), None)
         key = f"{item.id}_{cur['n']}"
 
@@ -120,7 +123,7 @@ else:
             finished = cur["finished"]
             response = None
             if item.format in ("mcq", "judge"):
-                response = st.radio("选项", range(len(item.options)), index=None, key=f"ans_{key}",
+                response = st.radio("选项", option_order(item, key), index=None, key=f"ans_{key}",
                                     format_func=lambda i: item.options[i], label_visibility="collapsed",
                                     disabled=finished)
             elif item.format == "order":
@@ -190,7 +193,8 @@ else:
                                           item.hints[:cur["hints"]])
                             if g:
                                 result.update(score=min(max(g.score, 0.0), 1.0), feedback=g.issue, hint=g.hint,
-                                              good=g.good, rule=g.rule, verdict=g.verdict)
+                                              good=g.good, rule=g.rule, verdict=g.verdict, uncertain=g.uncertain,
+                                              answer=str(response))
                             else:
                                 result = None
                         else:
@@ -224,16 +228,47 @@ else:
                     st.markdown(f"**提示：** {result['hint']}")
                 if result.get("offline"):
                     st.caption("可以再试一次，或看提示/答案后自己对照。")
+                if result.get("contest") == "upheld":
+                    st.caption("已复核：三位 AI 老师独立复核后，多数仍认为这个答案不对（理由见上面的“问题”）。")
+                elif result.get("verdict") is not None and ai_ready:
+                    if result.get("uncertain"):
+                        st.caption("这次判分不太确定。")
+                    if st.button("我认为我的答案也对", key=f"contest_{key}_{cur['wrong']}", icon=":material/gavel:",
+                                 help="请三位 AI 老师用更深入的思考独立复核；多数认为正确就改判，并记住这个答案"):
+                        verdict = ui.run_ai("正在复核你的答案…", drills.contest_grade, item, result["answer"],
+                                            item.hints[:cur["hints"]])
+                        if verdict:
+                            overturned, g = verdict
+                            if overturned:
+                                drills.accept_answer(progress, item, result["answer"])
+                                cur["wrong"] -= 1  # 这次其实答对了
+                                cur["finished"] = True
+                                cur["result"] = {**result, "score": 1.0, "contest": "overturned", "good": g.good,
+                                                 "feedback": "", "hint": ""}
+                                drills.finish_item(progress, session, item, 1.0, cur["hints"], False, cur.get("confidence"),
+                                                   cur["first_submit"] - cur["start"], mistake, result["answer"],
+                                                   wrong=cur["wrong"])
+                                st.toast("复核后认定你的答案正确，已改判。", icon=":material/check:")
+                            else:
+                                cur["result"] = {**result, "contest": "upheld", "feedback": g.issue or result["feedback"]}
+                            st.rerun()
             for i in range(cur["hints"]):
                 st.info(f"提示 {i + 1}：{item.hints[i]}", icon=":material/lightbulb:")
 
             if finished:
                 if cur["revealed"]:
                     st.warning("这题看了答案，不算做对。稍后会用同类新题再考你，也已加入错题本。", icon=":material/visibility:")
-                    explain = st.text_input("看完答案后，用自己的话说说为什么这样才对（写一句就行，自我解释能帮你记住规则）",
-                                            key=f"explain_{key}")
+                    if item.format == "fix" and item.accepted:
+                        # 看答案后亲手把正确的句子打一遍（研究建议的提示阶梯最后一步：揭示后要求重新输入）
+                        st.text_input("看完答案后，把改正后的句子完整地打一遍（可以照着参考答案打，动手改一遍记得更牢）",
+                                      key=f"explain_{key}")
+                    else:
+                        st.text_input("看完答案后，用自己的话说说为什么这样才对（写一句就行，自我解释能帮你记住规则）",
+                                      key=f"explain_{key}")
                 else:
                     extra = "" if cur["wrong"] == 0 and cur["hints"] == 0 else "（有提示/重试，掌握度按“有帮助”计算）"
+                    if (result or {}).get("contest") == "overturned":
+                        extra += "（复核后改判）"
                     st.success(f"答对了！{extra}", icon=":material/check:")
                     if result and result.get("good"):
                         st.markdown(f"👍 {result['good']}")
@@ -241,9 +276,9 @@ else:
                     st.markdown(f"**正确答案：** {ui.md_escape(item.options[item.answer])}")
                     if item.option_explanations:
                         with st.expander("每个选项为什么对 / 错", expanded=cur["revealed"] or cur["wrong"] > 0):
-                            for i, (opt, why) in enumerate(zip(item.options, item.option_explanations)):
+                            for i in option_order(item, key):  # 和作答时看到的顺序一致
                                 mark = "✅" if i == item.answer else "❌"
-                                st.markdown(f"{mark} {ui.md_escape(opt)} — {why}")
+                                st.markdown(f"{mark} {ui.md_escape(item.options[i])} — {item.option_explanations[i]}")
                 elif item.format == "order":
                     st.markdown("**正确顺序：**")
                     for n, s in enumerate(item.sentences, 1):
@@ -266,9 +301,16 @@ else:
                     with st.popover("规则卡", icon=":material/menu_book:"):
                         st.markdown(rule)
                 cols = st.columns([1, 1, 3])
-                need_explain = cur["revealed"] and len((ss.get(f"explain_{key}") or "").strip()) < 4
+                typed = (ss.get(f"explain_{key}") or "").strip()
+                if item.format == "fix" and item.accepted:
+                    need_explain = cur["revealed"] and not any(drills.normalize(typed) == drills.normalize(a)
+                                                               for a in item.accepted)
+                else:
+                    need_explain = cur["revealed"] and len(typed) < 4
                 if cols[0].button("下一题", type="primary", key=f"next_{key}", icon=":material/arrow_forward:",
-                                  disabled=need_explain, help="先写一句自己的解释" if need_explain else None):
+                                  disabled=need_explain,
+                                  help=("先把正确的句子打一遍" if item.format == "fix" else "先写一句自己的解释")
+                                  if need_explain else None):
                     if cur["revealed"] and progress["attempts"]:
                         progress["attempts"][-1]["explain"] = ss.get(f"explain_{key}", "").strip()
                         store.save()
