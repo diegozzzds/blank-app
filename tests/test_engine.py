@@ -74,7 +74,7 @@ def test_wrong_answer_requeues_skill_after_gap(progress):
     session = drills.new_session("kc", "articles")
     first, *_ = drills.next_item(progress, session, ai_ready=False)
     drills.finish_item(progress, session, first, 0.0, 0, True, None, 10, None, "x")
-    assert session["requeue"] == [{"kc": "articles", "after": 1 + drills.REQUEUE_GAP}]
+    assert session["requeue"] == [{"kc": "articles", "after": 1 + drills.REQUEUE_GAP, "focus": first.focus}]
     assert len(progress["mistakes"]) == 1
     seen = [first.id]
     for _ in range(3):
@@ -141,7 +141,7 @@ def test_order_partial_credit():
 
 
 def test_streak_with_freeze(progress):
-    today = datetime.now(timezone.utc).date()
+    today = store.study_day()
     for d in (0, 1, 3, 4):  # 第 2 天没练：用补签
         progress["days"][(today - timedelta(days=d)).isoformat()] = {"items": 12, "solo_correct": 8}
     count, met = drills.streak(progress)
@@ -204,7 +204,7 @@ def test_corrected_after_wrong_attempt_is_still_retested(progress):
     session = drills.new_session("kc", "articles")
     it, *_ = drills.next_item(progress, session, ai_ready=False)
     drills.finish_item(progress, session, it, 1.0, 0, False, "有把握", 10, None, "x", wrong=1)
-    assert session["requeue"] == [{"kc": "articles", "after": session["count"] + 1}]
+    assert [(r["kc"], r["after"]) for r in session["requeue"]] == [("articles", session["count"] + 1)]
     assert len(progress["mistakes"]) == 1  # 有把握却答错过：记入错题本
     assert progress["kc"]["articles"]["streak"] == 0
 
@@ -446,3 +446,114 @@ def test_save_prunes_chat_and_retired_mistakes(browser):
     assert len(p["chat"]) == store.MAX_CHAT and p["chat"][-1]["content"] == str(store.MAX_CHAT + 49)
     assert sum(m["retired"] for m in p["mistakes"]) == store.MAX_RETIRED_MISTAKES
     assert p["mistakes"][0]["n"] == -1  # 还没移出错题本的错题保留
+
+
+def _gen_req(progress, kc="hedging"):
+    return drills.generation_request(progress, kc)
+
+
+def test_blind_solver_disagreement_drops_item(progress, monkeypatch):
+    import fake_claude
+
+    # 盲做者第 1 题选了别的选项：说明答案可能有问题，这题不能用
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
+        {"index": 1, "choice": 0, "order": [], "correction": "", "unique": True, "note": ""},
+        {"index": 2, "choice": 0, "order": [], "correction": "", "unique": True, "note": ""}]})
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemCheckBatch", lambda req: {"results": [
+        {"index": 1, "ok": True, "problem": "", "also_accept": []}]})
+    made = drills.run_generation(fake_claude.FakeClient(), _gen_req(progress))
+    assert [m["instruction"] for m in made] == ["第二题"]
+    # 审核只看到通过盲做的题
+    assert "选出正确的句子" not in json_dump(fake_claude.CALLS[-1]["messages"])
+
+
+def test_solver_flags_ambiguity(progress, monkeypatch):
+    import fake_claude
+
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
+        {"index": 1, "choice": 2, "order": [], "correction": "", "unique": False, "note": "B 也可以"},
+        {"index": 2, "choice": 0, "order": [], "correction": "", "unique": False, "note": "两个都对"}]})
+    assert drills.run_generation(fake_claude.FakeClient(), _gen_req(progress)) == []
+
+
+def test_fix_items_gain_reviewer_alternatives(progress, monkeypatch):
+    import fake_claude
+
+    fix = {"format": "fix", "difficulty": 3, "instruction": "改正逗号连句", "content": "It rained, we stayed home.",
+           "options": [], "answer": -1, "option_explanations": [], "sentences": [],
+           "accepted": ["It rained, so we stayed home."], "criteria": "改正逗号连句",
+           "hints": ["h1", "h2", "h3"], "explanation": "e", "focus": "逗号连句"}
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemBatch", lambda req: {"items": [fix]})
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemSolveBatch", lambda req: {"results": [
+        {"index": 1, "choice": -1, "order": [], "correction": "It rained; we stayed home.", "unique": True, "note": ""}]})
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemCheckBatch", lambda req: {"results": [
+        {"index": 1, "ok": True, "problem": "", "also_accept": ["It rained; we stayed home.", "It rained, we stayed home."]}]})
+    made = drills.run_generation(fake_claude.FakeClient(), _gen_req(progress, "sent_boundary"))
+    assert made[0]["accepted"] == ["It rained, so we stayed home.", "It rained; we stayed home."]  # 原句不能当答案
+
+
+def test_generated_items_not_near_duplicates_of_bank(progress, monkeypatch):
+    import fake_claude
+
+    seed = bank("articles")[0]
+    dup = {"format": "mcq", "difficulty": 3, "instruction": "x", "content": seed.content, "options": seed.options,
+           "answer": seed.answer, "option_explanations": [], "sentences": [], "accepted": [], "criteria": "",
+           "hints": ["h1", "h2"], "explanation": "e", "focus": "x"}
+    monkeypatch.setitem(fake_claude.SAMPLES, "ItemBatch", lambda req: {"items": [dup]})
+    assert drills.run_generation(fake_claude.FakeClient(), _gen_req(progress, "articles")) == []
+
+
+def test_exhausted_skill_asks_for_new_items_instead_of_repeating(progress):
+    session = drills.new_session("kc", "articles")
+    for it in bank("articles"):  # 这个技能的种子题全都做过了（以前的练习里）
+        progress["items"][it.id] = {"b": 0.0, "n": 1}
+        progress["attempts"].append({"t": T0.isoformat(), "item": it.id})
+    item, _, _, need_gen = drills.next_item(progress, session, ai_ready=True)
+    assert item is None and need_gen == "articles"
+    session["gen_tried"].append("articles")  # 出题失败：退回到复习最久没见过的旧题
+    item, *_ = drills.next_item(progress, session, ai_ready=True)
+    assert item is not None and item.kc == "articles"
+    offline, *_ = drills.next_item(progress, drills.new_session("kc", "articles"), ai_ready=False)
+    assert offline is not None  # 离线时直接复习旧题
+
+
+def test_repeats_prefer_least_recently_seen(progress):
+    items = bank("articles")
+    for n, it in enumerate(items):
+        progress["items"][it.id] = {"b": 0.0, "n": 1}
+        progress["attempts"].append({"t": (T0 + timedelta(days=n)).isoformat(), "item": it.id})
+    assert drills.pick_item(progress, "articles", set(), False).id == items[0].id
+
+
+def test_low_pool_triggers_prefetch(progress):
+    session = drills.new_session("kc", "articles")
+    assert drills.low_kcs(progress, session, ai_ready=True) == []  # 还有 4 道没做过
+    progress["items"][bank("articles")[0].id] = {"b": 0.0, "n": 1}
+    assert drills.low_kcs(progress, session, ai_ready=True) == ["articles"]
+    assert drills.low_kcs(progress, session, ai_ready=False) == []
+
+
+def json_dump(x):
+    import json
+
+    return json.dumps(x, ensure_ascii=False)
+
+
+def _with_focus(items, focuses):
+    return [it.model_copy(update={"focus": f}) for it, f in zip(items, focuses)]
+
+
+def test_retest_prefers_same_error_type(progress, monkeypatch):
+    items = _with_focus(bank("articles"), ["零冠词", "泛指复数", "零冠词", "泛指复数"])
+    monkeypatch.setattr(drills, "seed_items", lambda: tuple(items))
+    monkeypatch.setattr(drills, "all_items", lambda p: list(items))
+    picked = drills.pick_item(progress, "articles", {items[0].id}, False, focus="零冠词")
+    assert picked.id == items[2].id
+
+
+def test_without_focus_alternates_error_types(progress, monkeypatch):
+    items = _with_focus(bank("articles"), ["零冠词", "零冠词", "泛指复数", "泛指复数"])
+    monkeypatch.setattr(drills, "all_items", lambda p: list(items))
+    progress["attempts"].append({"t": T0.isoformat(), "item": items[0].id, "kc": "articles", "focus": "零冠词"})
+    progress["items"][items[0].id] = {"b": 0.0, "n": 1}
+    assert drills.pick_item(progress, "articles", set(), False).focus == "泛指复数"

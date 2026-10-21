@@ -114,7 +114,7 @@ def _personal_item(kc: str, sentence: str, pattern: dict, hint: str) -> dict:
         "content": sentence, "options": [], "answer": -1, "option_explanations": [], "sentences": [],
         "accepted": [], "criteria": f"改正句中的“{pattern['pattern']}”问题（{pattern['rule']}），其他部分保持原意且没有新错误。",
         "hints": [hint, f"规则：{pattern['rule']}", "逐个检查句子的主干和标点，找出不符合规则的地方。"],
-        "explanation": pattern["rule"], "source": "personal",
+        "explanation": pattern["rule"], "focus": pattern["pattern"], "source": "personal",
     }
 
 

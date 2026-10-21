@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 
 from . import ai, mastery, store
-from .items import Item, rule_cards, seed_items
+from .items import Item, rule_cards, seed_items, shuffled_order
 from .skills import AUTO_GRADED, FORMATS, KCS
 
 TARGET_P = 0.75
@@ -64,23 +64,55 @@ def needs_ai(item: Item) -> bool:
     return item.format not in AUTO_GRADED
 
 
-def _recent_item_ids(progress: dict, n: int = 60) -> set[str]:
-    return {a["item"] for a in progress["attempts"][-n:]}
+def _last_seen(progress: dict) -> dict[str, str]:
+    """每道题最近一次作答的时间（ISO 字符串）。"""
+    return {a["item"]: a.get("t", "") for a in progress["attempts"]}
 
 
-def pick_item(progress: dict, kc: str, exclude: set[str], ai_ready: bool) -> Item | None:
-    """为技能 kc 选一道题：没做过的优先，难度最接近目标正确率。"""
+def fresh_items(progress: dict, kc: str, exclude: set[str] = frozenset(), ai_ready: bool = True) -> list[Item]:
+    """这个学生从没做过的题。"""
+    return [i for i in all_items(progress) if i.kc == kc and i.id not in exclude and i.id not in progress["items"]
+            and (ai_ready or not needs_ai(i))]
+
+
+def _last_focus(progress: dict, kc: str) -> str:
+    for a in reversed(progress["attempts"][-50:]):
+        if a.get("kc") == kc:
+            return a.get("focus", "")
+    return ""
+
+
+def pick_item(progress: dict, kc: str, exclude: set[str], ai_ready: bool, allow_repeat: bool = True,
+              focus: str = "") -> Item | None:
+    """为技能 kc 选一道题：没做过的优先，难度最接近目标正确率。
+
+    focus：再测刚做错的题或复习错题时，优先选同一类错误（同一子类）的新题；
+    没指定时，优先换一个和上一题不同的子类（技能内部也交错练习）。
+    没做过的题用完时，allow_repeat=False 返回 None（由调用方让 AI 出新题）；
+    allow_repeat=True 时重复旧题，最久没见过的优先。
+    """
     level = (progress.get("profile") or {}).get("level")
     target = 0.8 if level == "初中" else TARGET_P
+    last = "" if focus else _last_focus(progress, kc)
+
+    def focus_rank(i: Item) -> int:
+        if focus:
+            return 0 if i.focus == focus else 1
+        return 1 if last and i.focus == last else 0
+
+    fresh = fresh_items(progress, kc, exclude, ai_ready)
+    if fresh:
+        return min(fresh, key=lambda i: (focus_rank(i), abs(mastery.p_correct(progress, i) - target), i.id))
+    if not allow_repeat:
+        return None
     candidates = [i for i in all_items(progress) if i.kc == kc and i.id not in exclude]
     if not ai_ready:
         candidates = [i for i in candidates if not needs_ai(i)]
     if not candidates:
         return None
-    recent = _recent_item_ids(progress)
-    fresh = [i for i in candidates if i.id not in recent and i.id not in progress["items"]]
-    pool = fresh or [i for i in candidates if i.id not in recent] or candidates
-    return min(pool, key=lambda i: (abs(mastery.p_correct(progress, i) - target), i.id))
+    seen_at = _last_seen(progress)
+    return min(candidates, key=lambda i: (seen_at.get(i.id, ""), focus_rank(i), abs(mastery.p_correct(progress, i) - target),
+                                          i.id))
 
 
 # ---------------- 选题 ----------------
@@ -152,7 +184,6 @@ def candidate_kcs(progress: dict, session: dict, ai_ready: bool = True) -> list[
 def next_item(progress: dict, session: dict, ai_ready: bool) -> tuple[Item | None, str, dict | None, str | None]:
     """返回 (题目, 原因, 关联错题, 需要 AI 生成题目的技能)。"""
     seen = set(session["seen"])
-    need_gen = None
     cands = candidate_kcs(progress, session, ai_ready)
     # 刚做错、还在等待再测的技能先不出（保证中间隔开几题）；同一技能不连续出现 3 次（交错练习）
     waiting = {r["kc"] for r in session["requeue"] if r["after"] > session["count"]}
@@ -161,18 +192,39 @@ def next_item(progress: dict, session: dict, ai_ready: bool) -> tuple[Item | Non
         return (c[0] in waiting and not c[1].startswith("再测"), _too_repetitive(session, c[0]))
 
     ordered = sorted(cands, key=rank)
+    retest_focus = {r["kc"]: r.get("focus", "") for r in session["requeue"] if r["after"] <= session["count"]}
+
+    def focus_of(kc: str, reason: str, mistake: dict | None) -> str:
+        if reason.startswith("再测"):
+            return retest_focus.get(kc, "")
+        return (mistake or {}).get("focus", "")
+
+    flagged = set(progress.get("flagged_items", []))
     for kc, reason, mistake in ordered:
-        flagged = set(progress.get("flagged_items", []))
         if mistake and mistake.get("item") and not mistake.get("personal_done") and mistake["item"]["id"] not in flagged:
             it = Item.model_validate(mistake["item"])
             if it.id not in seen and (ai_ready or not needs_ai(it)):
                 return it, reason, mistake, None
-        it = pick_item(progress, kc, seen, ai_ready)
-        if it:
-            return it, reason, mistake, None
-        if need_gen is None and ai_ready and kc not in session.get("gen_tried", []):
-            need_gen = kc
-    return None, "", None, need_gen
+    # 先只出没做过的题；都用完了，能出新题就让 AI 出（不重复旧题），出不了才重复最久没见过的旧题
+    can_generate = [c for c in ordered if ai_ready and c[0] not in session.get("gen_tried", [])]
+    for allow_repeat in (False, True):
+        if allow_repeat and can_generate:
+            return None, "", None, can_generate[0][0]
+        for kc, reason, mistake in ordered:
+            it = pick_item(progress, kc, seen, ai_ready, allow_repeat=allow_repeat, focus=focus_of(kc, reason, mistake))
+            if it:
+                return it, reason, mistake, None
+    return None, "", None, None
+
+
+def low_kcs(progress: dict, session: dict, ai_ready: bool) -> list[str]:
+    """接下来要练、但没做过的题快用完的技能（按优先级），用于后台提前出题。"""
+    if not ai_ready:
+        return []
+    seen = set(session["seen"])
+    upcoming = list(dict.fromkeys(kc for kc, _, _ in candidate_kcs(progress, session, ai_ready)))[:PREFETCH_KCS]
+    return [kc for kc in upcoming if kc not in session.get("gen_tried", [])
+            and len(fresh_items(progress, kc, seen)) <= LOW_WATER]
 
 
 # ---------------- 判分 ----------------
@@ -248,6 +300,7 @@ class ItemDraft(BaseModel):
     criteria: str
     hints: list[str]
     explanation: str
+    focus: str = Field(description="这道题练的具体错误类型（中文短语）")
 
 
 class ItemBatch(BaseModel):
@@ -258,46 +311,168 @@ class ItemCheck(BaseModel):
     index: int = Field(description="题目序号（从 1 开始）")
     ok: bool = Field(description="答案唯一正确、英文无误、提示不泄露答案时为 true")
     problem: str = Field(description="有问题时说明问题；没有则为空字符串")
+    also_accept: list[str] = Field(description="改错题：其他同样正确的完整改法；其他题型为空列表")
 
 
 class ItemCheckBatch(BaseModel):
     results: list[ItemCheck]
 
 
-def generate_items(progress: dict, kc: str, n: int = 4) -> list[Item]:
+class ItemSolve(BaseModel):
+    index: int = Field(description="题目序号（从 1 开始）")
+    choice: int = Field(description="选择题/当考官：所选选项序号（从 0 开始）；其他题型为 -1")
+    order: list[str] = Field(description="排序题：按正确顺序排列的句子字母；其他题型为空列表")
+    correction: str = Field(description="改错题：改正后的完整句子；其他题型为空字符串")
+    unique: bool = Field(description="是否只有一个站得住的答案")
+    note: str = Field(description="简短说明；没有则为空字符串")
+
+
+class ItemSolveBatch(BaseModel):
+    results: list[ItemSolve]
+
+
+GEN_BATCH = 6     # 每次出几道题（核对后通常会少一些）
+LOW_WATER = 3     # 某技能没做过的题只剩这么多时，后台提前出新题
+PREFETCH_KCS = 4  # 只为接下来最可能出现的几个技能提前出题，避免浪费
+LETTERS = "ABCDEFGH"
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z']+", text.lower()))
+
+
+def too_similar(a: str, b: str, threshold: float = 0.8) -> bool:
+    """两段英文的词重合度过高（Jaccard），视为重复题。"""
+    wa, wb = _words(a), _words(b)
+    if not wa or not wb:
+        return a.strip() == b.strip()
+    return len(wa & wb) / len(wa | wb) >= threshold
+
+
+def _item_text(it) -> str:
+    return " ".join([it.content, " ".join(it.options), " ".join(it.sentences)]) or it.instruction
+
+
+def generation_request(progress: dict, kc: str, n: int = GEN_BATCH) -> dict:
+    """在主线程里准备出题请求（这里会读学生状态和 session_state）；真正的网络请求见 run_generation。"""
     from . import prompts
 
     st = mastery.kc_state(progress, kc)
     # 目标难度：让预计正确率接近 TARGET_P（θ - b ≈ 1.1）
     target_b = st["theta"] - 1.1
     difficulty = int(min(5, max(1, round(target_b / 0.8 + 3))))
-    examples = [i for i in seed_items() if i.kc == kc][:3]
-    seen_contents = [i.content or i.instruction for i in all_items(progress) if i.kc == kc][-15:]
+    bank = [i for i in seed_items() if i.kc == kc]
+    examples = list({i.format: i for i in reversed(bank)}.values())[:3]  # 每种题型一个示例
+    existing = [_item_text(i) for i in all_items(progress) if i.kc == kc]
     personal = [m["text"] for m in progress["mistakes"]
                 if m["kc"] == kc and m.get("text") and m.get("format", "fix") not in AUTO_GRADED][-5:]
-    system, user = prompts.item_generation_request(kc, n, difficulty, examples, seen_contents, personal,
-                                                   (progress.get("profile") or {}).get("level", "高中"))
-    batch = ai.structured(system, user, ItemBatch, max_tokens=16000, effort="medium")
-    # 第二次调用逐题核对答案（Pardos & Bhandari 2024：未经核对的 AI 提示有相当比例不合格）
-    # 核对失败或漏掉的题一律不用（宁可少出题，也不让没核对过的题给学生做）
-    vsys, vuser = prompts.item_check_request(kc, [d.model_dump() for d in batch.items])
-    checks = ai.structured(vsys, vuser, ItemCheckBatch, max_tokens=6000, effort="low")
-    passed = {c.index for c in checks.results if c.ok}
-    made = []
-    for n, d in enumerate(batch.items, 1):
-        if n not in passed:
-            continue
+    system, user = prompts.item_generation_request(kc, n, difficulty, examples, [t[:160] for t in existing[-40:]],
+                                                   personal, (progress.get("profile") or {}).get("level", "高中"))
+    return {"kc": kc, "system": system, "user": user, "existing": existing}
+
+
+def _blind_view(n: int, it: Item) -> dict:
+    """给盲做的题：去掉答案、解析、提示和参考答案；排序题打乱并标上字母。"""
+    view = {"index": n, "format": it.format, "instruction": it.instruction, "content": it.content}
+    if it.format in ("mcq", "judge"):
+        view["options"] = [f"{i}. {o}" for i, o in enumerate(it.options)]
+    elif it.format == "order":
+        order = shuffled_order(it, it.id)
+        view["sentences"] = [f"{LETTERS[j]}. {it.sentences[i]}" for j, i in enumerate(order)]
+        view["_order"] = order
+    return view
+
+
+def _solve_matches(it: Item, view: dict, solve: ItemSolve | None) -> bool:
+    if solve is None or not solve.unique:
+        return False
+    if it.format in ("mcq", "judge"):
+        return solve.choice == it.answer
+    if it.format == "order":
+        order = view["_order"]
+        try:
+            picked = [order[LETTERS.index(x.strip()[:1].upper())] for x in solve.order]
+        except (ValueError, IndexError):
+            return False
+        return picked == list(range(len(it.sentences)))
+    if it.format == "fix":
+        return normalize(solve.correction) != normalize(it.content)  # 盲做者至少要能发现错误
+    return True
+
+
+def run_generation(client, req: dict) -> list[dict]:
+    """出题 → 程序检查 → 盲做比对 → 审核，全部通过的题才返回。
+
+    可以在后台线程里运行：不读 session_state，只做网络请求和计算。
+    依据：未经核对的 AI 题目和提示有相当比例不合格（Pardos & Bhandari 2024）；
+    让另一个模型不看答案独立作答、与标注答案比对，是发现“答案错误/不唯一”的常用做法。
+    """
+    from . import prompts
+
+    kc = req["kc"]
+    batch = ai.structured(req["system"], req["user"], ItemBatch, max_tokens=16000, effort="medium", client=client)
+    existing = list(req["existing"])
+    drafts: list[Item] = []
+    for d in batch.items:
         digest = hashlib.sha1(f"{kc}|{d.content}|{d.instruction}|{d.options}".encode()).hexdigest()[:10]
         try:
             it = Item(id=f"ai-{kc}-{digest}", kc=kc, source="ai", **d.model_dump())
         except ValueError:
             continue
-        if it.format in KCS[kc].formats and not it.problems() and len(it.hints) >= 1:
+        if it.format not in KCS[kc].formats or it.problems() or len(it.hints) < 2:
+            continue
+        text = _item_text(it)
+        if any(too_similar(text, e) for e in existing):
+            continue
+        existing.append(text)
+        drafts.append(it)
+    if not drafts:
+        return []
+    views = [_blind_view(n, it) for n, it in enumerate(drafts, 1)]
+    ssys, suser = prompts.item_solve_request(kc, [{k: v for k, v in x.items() if not k.startswith("_")} for x in views])
+    solves = {r.index: r for r in ai.structured(ssys, suser, ItemSolveBatch, max_tokens=6000, effort="low",
+                                                client=client).results}
+    blind_ok = {n for n, (it, v) in enumerate(zip(drafts, views), 1) if _solve_matches(it, v, solves.get(n))}
+    keep = [(n, it) for n, it in enumerate(drafts, 1) if n in blind_ok]
+    if not keep:
+        return []
+    shown = [dict(it.model_dump(exclude={"id", "kc", "source"}), index=i) for i, (_, it) in enumerate(keep, 1)]
+    answers = [dict(solves[n].model_dump(), index=i) for i, (n, _) in enumerate(keep, 1)]
+    vsys, vuser = prompts.item_check_request(kc, shown, answers)
+    checks = {c.index: c for c in ai.structured(vsys, vuser, ItemCheckBatch, max_tokens=6000, effort="low",
+                                                client=client).results}
+    made = []
+    for i, (_, it) in enumerate(keep, 1):
+        c = checks.get(i)
+        if c is None or not c.ok:  # 核对失败或漏掉的题一律不用（宁可少出题）
+            continue
+        if it.format == "fix":
+            extra = [a for a in c.also_accept if a.strip() and normalize(a) != normalize(it.content)]
+            it = it.model_copy(update={"accepted": list(dict.fromkeys(it.accepted + extra))})
+        made.append(it.model_dump())
+    return made
+
+
+def add_generated(progress: dict, raw: list[dict]) -> list[Item]:
+    """把核对通过的新题加入题库（主线程调用）。"""
+    existing = {x["id"] for x in progress["ai_items"]} | {i.id for i in seed_items()}
+    made = []
+    for r in raw:
+        try:
+            it = Item.model_validate(r)
+        except ValueError:
+            continue
+        if it.id not in existing and not it.problems():
+            existing.add(it.id)
             made.append(it)
-    existing = {x["id"] for x in progress["ai_items"]}
-    progress["ai_items"].extend(i.model_dump() for i in made if i.id not in existing)
+    progress["ai_items"].extend(i.model_dump() for i in made)
     store.save()
     return made
+
+
+def generate_items(progress: dict, kc: str, n: int = GEN_BATCH) -> list[Item]:
+    """同步出题（等待结果）。刷题页通常用 jobs 在后台提前出题。"""
+    return add_generated(progress, run_generation(ai.client(), generation_request(progress, kc, n)))
 
 
 # ---------------- 记录作答 ----------------
@@ -317,6 +492,7 @@ def add_mistake(progress: dict, kc: str, text: str, note: str, source: str,
         "item_id": item.id if item else (personal_item or {}).get("id"),
         "item": personal_item, "personal_done": False,
         "format": item.format if item else (personal_item or {}).get("format", "fix"),
+        "focus": item.focus if item else (personal_item or {}).get("focus", ""),
         "created": when.isoformat(), "card": card, "reviews_ok": [], "retired": False,
     }
     progress["mistakes"].append(m)
@@ -364,7 +540,8 @@ def finish_item(progress: dict, session: dict, item: Item, score: float, hints: 
     kc_st = mastery.record(progress, item, score, assisted, revealed, confident, seconds)
     progress["attempts"].append({
         "t": store.now().isoformat(), "item": item.id, "kc": item.kc, "format": item.format,
-        "score": round(score, 2), "hints": hints, "wrong": wrong, "revealed": revealed, "confidence": confidence,
+        "focus": item.focus, "score": round(score, 2), "hints": hints, "wrong": wrong, "revealed": revealed,
+        "confidence": confidence,
         "seconds": round(seconds, 1), "mode": session["mode"],
     })
     day = _day_stats(progress)
@@ -387,7 +564,7 @@ def finish_item(progress: dict, session: dict, item: Item, score: float, hints: 
         if times < MAX_REQUEUE:
             # 有把握却答错（高信心错误）更早再测（Metcalfe 2017：这类错误最容易被纠正）
             gap = 1 if confident else REQUEUE_GAP
-            session["requeue"].append({"kc": item.kc, "after": session["count"] + gap})
+            session["requeue"].append({"kc": item.kc, "after": session["count"] + gap, "focus": item.focus})
     session["log"].append({"kc": item.kc, "item": item.id, "correct": correct, "solo": solo, "score": score,
                            "missed": missed})
     store.save()

@@ -40,12 +40,17 @@ SAMPLES = {
     "ItemBatch": lambda req: {"items": [
         {"format": "mcq", "difficulty": 3, "instruction": "选出正确的句子", "content": "", "options": ["A x", "B y", "C z"],
          "answer": 2, "option_explanations": ["no", "no", "yes"], "sentences": [], "accepted": [], "criteria": "",
-         "hints": ["h1", "h2", "h3"], "explanation": "AI rule"}
+         "hints": ["h1", "h2", "h3"], "explanation": "AI rule", "focus": "f1"}
         for _ in range(1)] + [
         {"format": "mcq", "difficulty": 3, "instruction": "第二题", "content": "c2", "options": ["A", "B"],
          "answer": 0, "option_explanations": ["yes", "no"], "sentences": [], "accepted": [], "criteria": "",
-         "hints": ["h1", "h2", "h3"], "explanation": "AI rule 2"}]},
-    "ItemCheckBatch": lambda req: {"results": [{"index": 1, "ok": True, "problem": ""}, {"index": 2, "ok": False, "problem": "答案不唯一"}]},
+         "hints": ["h1", "h2", "h3"], "explanation": "AI rule 2", "focus": "f2"}]},
+    # 盲做：两道题都答对标注的答案；审核：第 2 题不合格
+    "ItemSolveBatch": lambda req: {"results": [
+        {"index": 1, "choice": 2, "order": [], "correction": "", "unique": True, "note": ""},
+        {"index": 2, "choice": 0, "order": [], "correction": "", "unique": True, "note": ""}]},
+    "ItemCheckBatch": lambda req: {"results": [{"index": 1, "ok": True, "problem": "", "also_accept": []},
+                                               {"index": 2, "ok": False, "problem": "答案不唯一", "also_accept": []}]},
     "StudyPlan": lambda req: {"overview": "AI 计划概述", "daily_routine": "每天 20 分钟", "milestones": ["m1", "m2"],
                               "weeks": [{"title": "句子基础", "kcs": ["sent_boundary", "articles", "critical_questions"], "goals": ["学会分清完整句"],
                                          "why": "诊断显示", "lesson_focus": "句子边界", "essay_task": "Agree/disagree", "checkpoint": False},

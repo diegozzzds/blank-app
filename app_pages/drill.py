@@ -2,7 +2,7 @@ import time
 
 import streamlit as st
 
-from essay_coach import ai, drills, mastery, store, ui
+from essay_coach import ai, drills, jobs, mastery, store, ui
 from essay_coach.items import Item, shuffled_order
 from essay_coach.skills import AUTO_GRADED, KCS
 
@@ -59,16 +59,27 @@ else:
                 session["goal"] += 10
                 st.rerun()
 
+    # 合并后台提前出好的题；出题失败的技能这次练习不再自动重试（改为复习最久没见过的旧题）
+    gen_tried = session.setdefault("gen_tried", [])
+    _, failed = jobs.collect(progress)
+    gen_tried.extend(k for k in failed if k not in gen_tried)
+
+    if busy := jobs.running_kcs():
+        st.caption("⏳ 后台正在为 " + "、".join(KCS[k].name for k in busy if k in KCS) + " 准备新题（出完会盲做核对），不影响你继续做题。")
+
     cur = session.get("current")
     if cur is None or cur.get("finished_next"):
         item, reason, mistake, need_gen = drills.next_item(progress, session, ai_ready)
         if item is None and need_gen and ai_ready:
-            made = ui.run_ai(f"正在为“{KCS[need_gen].name}”出新题（出题后会再核对一遍）…",
-                             drills.generate_items, progress, need_gen)
-            if not made:  # 出题失败：这次练习不再为这个技能自动重试，避免每次刷新都重复调用
-                session.setdefault("gen_tried", []).append(need_gen)
-            else:
-                item, reason, mistake, need_gen = drills.next_item(progress, session, ai_ready)
+            with st.spinner(f"“{KCS[need_gen].name}”的题都做过了，正在出新题。出完会让另一位 AI 老师不看答案独立做一遍，"
+                            "再逐题审核，大约需要半分钟…"):
+                jobs.submit(progress, need_gen, force=True)
+                made, failed = jobs.wait(progress, need_gen)
+            if need_gen not in made:
+                gen_tried.append(need_gen)
+                why = failed.get(need_gen, "出题时间太长。")
+                st.toast(f"这次没能出新题（{why}），先复习做过的题。", icon=":material/info:")
+            item, reason, mistake, need_gen = drills.next_item(progress, session, ai_ready)
         if item is None:
             if session["mode"] == "mistakes":
                 st.info("没有到期的错题了。错题会按遗忘规律在之后几天再出现。", icon=":material/check_circle:")
@@ -241,6 +252,8 @@ else:
                     st.markdown("**参考答案**" + ("（你的答案不必一样）" if not cur["revealed"] else "") + "：")
                     for a in item.accepted[:3]:
                         st.markdown(f"- {ui.md_escape(a)}")
+                if item.focus:
+                    st.markdown(f"**这题练的是：** {item.focus}")
                 if item.explanation:
                     st.markdown(f"**规则：** {item.explanation}")
                 if result and result.get("rule") and result["rule"] not in item.explanation:
@@ -267,3 +280,8 @@ else:
                     st.toast("已记录，这道题不会再出现。谢谢！")
                     cur["finished_next"] = True
                     st.rerun()
+
+    # 学生做题的同时，为接下来要练、没做过的题快用完的技能提前出题（后台进行，不用等）
+    if ai_ready:
+        for k in drills.low_kcs(progress, session, ai_ready):
+            jobs.submit(progress, k)

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from essay_coach import ai, drills, store, ui
+from essay_coach import ai, drills, mastery, store, ui
 from essay_coach.skills import KCS
 
 progress = store.progress()
@@ -34,12 +34,14 @@ else:
     show_retired = st.toggle("显示已移出的错题", value=False)
     rows = [m for m in (mistakes if show_retired else active) if not pick or m["kc"] in pick]
     now = datetime.now(timezone.utc)
-    for m in sorted(rows, key=lambda m: m["card"]["due"]):
-        due_at = datetime.fromisoformat(m["card"]["due"])
+    for m in sorted(rows, key=lambda m: mastery.effective_due(m["card"], progress)):
+        due_at = mastery.effective_due(m["card"], progress)  # 考试日期临近时复习会提前
         when = "今天到期" if due_at <= now else f"{(due_at - now).days + 1} 天后复习"
         with st.container(border=True):
             with st.container(horizontal=True):
                 ui.kc_badge(m["kc"])
+                if m.get("focus"):
+                    st.badge(m["focus"], color="violet")
                 st.badge("作文里的句子" if m["source"] == "essay" else "刷题", color="red" if m["source"] == "essay" else "gray")
                 st.badge("已移出" if m.get("retired") else when, color="green" if m.get("retired") else "orange")
                 st.badge(f"已独立做对 {len(m.get('reviews_ok', []))}/{drills.MISTAKE_RETIRE_REVIEWS} 天", color="blue")

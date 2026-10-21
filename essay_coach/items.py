@@ -40,6 +40,7 @@ class Item(BaseModel):
     criteria: str = ""
     hints: list[str] = Field(default_factory=list, description="由浅入深的提示，不能直接给出答案")
     explanation: str = Field(default="", description="讲解：规则 + 为什么")
+    focus: str = Field(default="", description="这道题练的具体错误类型（技能下的子类），如“泛指复数名词前不用 the”")
     source: str = "seed"
 
     @field_validator("kc")

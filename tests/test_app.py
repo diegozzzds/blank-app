@@ -198,3 +198,20 @@ def test_failed_ai_grading_allows_resubmitting_same_answer(at, monkeypatch):
     btn(at, "提交").click().run()
     assert not any("已经提交过" in w.value for w in at.warning)
     assert at.session_state["drill"]["current"]["wrong"] == 1  # 这次真的判了分
+
+
+def test_background_prefetch_adds_items_before_bank_runs_out(at):
+    setup_profile_and_plan(at)
+    at.session_state["drill_request"] = {"mode": "kc", "kc": "articles"}  # 测试题库里这个技能有 4 道题
+    at.switch_page("app_pages/drill.py")
+    at.run()
+    check(at, "prefetch start")
+    jobs = at.session_state["gen_jobs"]
+    assert "articles" in jobs  # 没做过的题只剩 4 道以下：后台开始出题，学生不用等
+    jobs["articles"].result(timeout=30)
+    cur = at.session_state["drill"]["current"]
+    it = Item.model_validate(cur["item"])
+    at.radio(key=f"ans_{it.id}_{cur['n']}").set_value(it.answer).run()
+    btn(at, "提交").click().run()
+    check(at, "prefetch merged")
+    assert any(x["kc"] == "articles" for x in at.session_state["progress"]["ai_items"])

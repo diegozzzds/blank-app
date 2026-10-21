@@ -42,6 +42,13 @@ def _client(key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=key, max_retries=3)
 
 
+def client() -> anthropic.Anthropic:
+    """当前 API Key 对应的客户端。后台线程不能读 session_state，要在主线程取好再传进去。"""
+    if not is_ready():
+        raise AIError("还没有配置 Anthropic API Key，请在左侧边栏填写。")
+    return _client(api_key())
+
+
 def _effort() -> str:
     return EFFORT_LEVELS.get(st.session_state.get("effort_label", "标准"), "medium")
 
@@ -72,8 +79,8 @@ def _final_text(message) -> str:
 
 
 @contextmanager
-def _friendly_errors():
-    if not is_ready():
+def _friendly_errors(check_key: bool = True):
+    if check_key and not is_ready():
         raise AIError("还没有配置 Anthropic API Key，请在左侧边栏填写。")
     try:
         yield
@@ -97,11 +104,16 @@ def _friendly_errors():
         raise AIError("和 AI 服务的连接中断了，请重试。") from e
 
 
-def structured(system: str, user: str, schema: type[T], max_tokens: int = 32000, effort: str | None = None) -> T:
-    """让 Claude 按 schema 输出 JSON，并解析成 pydantic 对象。effort 为空时使用侧边栏设置。"""
-    with _friendly_errors():
-        with _client(api_key()).beta.messages.stream(
-            **_request(system, [{"role": "user", "content": user}], max_tokens, schema, effort)
+def structured(system: str, user: str, schema: type[T], max_tokens: int = 32000, effort: str | None = None,
+               client: anthropic.Anthropic | None = None) -> T:
+    """让 Claude 按 schema 输出 JSON，并解析成 pydantic 对象。effort 为空时使用侧边栏设置。
+
+    在后台线程里调用时必须传入 client 和 effort（线程里不能读 session_state）。
+    """
+    with _friendly_errors(check_key=client is None):
+        c = client or _client(api_key())
+        with c.beta.messages.stream(
+            **_request(system, [{"role": "user", "content": user}], max_tokens, schema, effort or _effort())
         ) as stream:
             message = stream.get_final_message()
 
