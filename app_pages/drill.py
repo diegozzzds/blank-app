@@ -262,6 +262,9 @@ else:
                         # 看答案后亲手把正确的句子打一遍（研究建议的提示阶梯最后一步：揭示后要求重新输入）
                         st.text_input("看完答案后，把改正后的句子完整地打一遍（可以照着参考答案打，动手改一遍记得更牢）",
                                       key=f"explain_{key}")
+                    elif item.kc in drills.PROBABILISTIC_KCS:
+                        # 冠词、搭配这类靠大量例子积累的规则：多做几题比写解释更有效（Wylie et al. 2009），解释可选
+                        st.text_input("（可选）用自己的话说说为什么这样才对", key=f"explain_{key}")
                     else:
                         st.text_input("看完答案后，用自己的话说说为什么这样才对（写一句就行，自我解释能帮你记住规则）",
                                       key=f"explain_{key}")
@@ -306,7 +309,7 @@ else:
                     need_explain = cur["revealed"] and not any(drills.normalize(typed) == drills.normalize(a)
                                                                for a in item.accepted)
                 else:
-                    need_explain = cur["revealed"] and len(typed) < 4
+                    need_explain = cur["revealed"] and len(typed) < 4 and item.kc not in drills.PROBABILISTIC_KCS
                 if cols[0].button("下一题", type="primary", key=f"next_{key}", icon=":material/arrow_forward:",
                                   disabled=need_explain,
                                   help=("先把正确的句子打一遍" if item.format == "fix" else "先写一句自己的解释")

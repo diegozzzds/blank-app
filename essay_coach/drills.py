@@ -34,6 +34,10 @@ MISTAKE_RETIRE_REVIEWS = 3
 PERSISTENT_KCS = {"articles", "collocation", "hedging", "register", "transitions"}
 
 
+# 没有简单规则、靠大量例子积累的技能（冠词、搭配、用词）：看答案后的自我解释改为可选
+PROBABILISTIC_KCS = {"articles", "collocation", "word_precision"}
+
+
 def retire_after(kc: str) -> int:
     return MISTAKE_RETIRE_REVIEWS + (1 if kc in PERSISTENT_KCS else 0)
 
