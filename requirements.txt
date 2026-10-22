@@ -1,1 +1,8 @@
-streamlit
+streamlit>=1.65,<2
+anthropic>=1.13
+pydantic>=2.7
+altair>=5
+fsrs>=6.3,<7
+st-annotated-text==4.0.2
+redlines==0.6.2
+streamlit_js_eval==1.0.0

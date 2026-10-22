@@ -1,0 +1,610 @@
+[
+ {
+  "id": "sent_boundary-01",
+  "kc": "sent_boundary",
+  "format": "mcq",
+  "difficulty": 2,
+  "instruction": "sent_boundary 第 1 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "sent_boundary-02",
+  "kc": "sent_boundary",
+  "format": "mcq",
+  "difficulty": 3,
+  "instruction": "sent_boundary 第 2 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 2,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "sent_boundary-03",
+  "kc": "sent_boundary",
+  "format": "mcq",
+  "difficulty": 4,
+  "instruction": "sent_boundary 第 3 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 0,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "sent_boundary-04",
+  "kc": "sent_boundary",
+  "format": "mcq",
+  "difficulty": 5,
+  "instruction": "sent_boundary 第 4 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "articles-01",
+  "kc": "articles",
+  "format": "mcq",
+  "difficulty": 2,
+  "instruction": "articles 第 1 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "articles-02",
+  "kc": "articles",
+  "format": "mcq",
+  "difficulty": 3,
+  "instruction": "articles 第 2 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 2,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "articles-03",
+  "kc": "articles",
+  "format": "mcq",
+  "difficulty": 4,
+  "instruction": "articles 第 3 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 0,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "articles-04",
+  "kc": "articles",
+  "format": "mcq",
+  "difficulty": 5,
+  "instruction": "articles 第 4 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "chinglish_struct-01",
+  "kc": "chinglish_struct",
+  "format": "mcq",
+  "difficulty": 2,
+  "instruction": "chinglish_struct 第 1 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "chinglish_struct-02",
+  "kc": "chinglish_struct",
+  "format": "mcq",
+  "difficulty": 3,
+  "instruction": "chinglish_struct 第 2 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 2,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "chinglish_struct-03",
+  "kc": "chinglish_struct",
+  "format": "mcq",
+  "difficulty": 4,
+  "instruction": "chinglish_struct 第 3 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 0,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "chinglish_struct-04",
+  "kc": "chinglish_struct",
+  "format": "mcq",
+  "difficulty": 5,
+  "instruction": "chinglish_struct 第 4 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "prompt_analysis-01",
+  "kc": "prompt_analysis",
+  "format": "mcq",
+  "difficulty": 2,
+  "instruction": "prompt_analysis 第 1 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "prompt_analysis-02",
+  "kc": "prompt_analysis",
+  "format": "mcq",
+  "difficulty": 3,
+  "instruction": "prompt_analysis 第 2 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 2,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "prompt_analysis-03",
+  "kc": "prompt_analysis",
+  "format": "mcq",
+  "difficulty": 4,
+  "instruction": "prompt_analysis 第 3 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 0,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "prompt_analysis-04",
+  "kc": "prompt_analysis",
+  "format": "mcq",
+  "difficulty": 5,
+  "instruction": "prompt_analysis 第 4 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "thesis-01",
+  "kc": "thesis",
+  "format": "mcq",
+  "difficulty": 2,
+  "instruction": "thesis 第 1 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "thesis-02",
+  "kc": "thesis",
+  "format": "mcq",
+  "difficulty": 3,
+  "instruction": "thesis 第 2 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 2,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "thesis-03",
+  "kc": "thesis",
+  "format": "mcq",
+  "difficulty": 4,
+  "instruction": "thesis 第 3 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 0,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "thesis-04",
+  "kc": "thesis",
+  "format": "mcq",
+  "difficulty": 5,
+  "instruction": "thesis 第 4 题",
+  "content": "",
+  "options": [
+   "Option A.",
+   "Option B.",
+   "Option C."
+  ],
+  "answer": 1,
+  "option_explanations": [
+   "解析0",
+   "解析1",
+   "解析2"
+  ],
+  "sentences": [],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看哪里",
+   "用什么规则",
+   "强提示"
+  ],
+  "explanation": "规则说明"
+ },
+ {
+  "id": "sent_boundary-05",
+  "kc": "sent_boundary",
+  "format": "fix",
+  "difficulty": 3,
+  "instruction": "改正逗号连句",
+  "content": "It is late, we should go home.",
+  "options": [],
+  "answer": -1,
+  "option_explanations": [],
+  "sentences": [],
+  "accepted": [
+   "It is late, so we should go home.",
+   "It is late; we should go home.",
+   "It is late. We should go home."
+  ],
+  "criteria": "修正逗号连句",
+  "hints": [
+   "看逗号",
+   "两个完整句",
+   "加连词或分号"
+  ],
+  "explanation": "两个完整句不能只用逗号连接。"
+ },
+ {
+  "id": "organization-01",
+  "kc": "organization",
+  "format": "order",
+  "difficulty": 2,
+  "instruction": "排出正确顺序",
+  "content": "",
+  "options": [],
+  "answer": -1,
+  "option_explanations": [],
+  "sentences": [
+   "First sentence.",
+   "Then the second.",
+   "Finally the third."
+  ],
+  "accepted": [],
+  "criteria": "",
+  "hints": [
+   "看连接词",
+   "First 开头",
+   "Finally 结尾"
+  ],
+  "explanation": "按 First → Then → Finally。"
+ }
+]
